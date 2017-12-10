@@ -526,6 +526,14 @@ message BatchNormParameter {
   optional float eps = 3 [default = 1e-5];
 }
 
+// Message used by internally by BeamSearchParameter
+message RecurrentConnectionParameter {
+  // Specify blob copy source
+  optional string src = 1;
+  // Specify blob copy destination
+  optional string dest = 2;
+}
+
 message BeamSearchParameter {
   // Length of the beam search output sequence
   optional uint32 sequence_length = 4 [default = 20];
@@ -535,6 +543,10 @@ message BeamSearchParameter {
   optional uint32 end_of_sequence = 6 [default = 0];
   // Ignore label for unused outputs
   optional int32 ignore_label = 11 [default = -1];
+  // Specify recurrent blob relations for beam search
+  repeated RecurrentConnectionParameter recurrent_connection = 7;
+  // Specify the input blob and output softmax blob for beam search
+  optional RecurrentConnectionParameter beam_search_connection = 8;
   // Whether to add constraint preventing identical output tokens from being consecutively repeated
   optional bool prevent_repeats = 9 [default = true];
   // Optionally, specify output tokens that can appear multiple times in a sequence.
