@@ -527,6 +527,8 @@ message BatchNormParameter {
 }
 
 message BeamSearchParameter {
+  // Length of the beam search output sequence
+  optional uint32 sequence_length = 4 [default = 20];
   // Beam size to used when searching
   optional uint32 beam_size = 5 [default = 1];
   // End of sequence index

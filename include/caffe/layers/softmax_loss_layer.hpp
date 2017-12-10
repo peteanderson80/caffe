@@ -34,6 +34,8 @@ namespace caffe {
  *      the labels @f$ l @f$, an integer-valued Blob with values
  *      @f$ l_n \in [0, 1, 2, ..., K - 1] @f$
  *      indicating the correct class label among the @f$ K @f$ classes
+ *   -# @f$ (N \times 1 \times 1 \times 1) @f$
+ *      optionally, loss weights
  * @param top output Blob vector (length 1)
  *   -# @f$ (1 \times 1 \times 1 \times 1) @f$
  *      the computed cross-entropy classification loss: @f$ E =
@@ -59,6 +61,9 @@ class SoftmaxWithLossLayer : public LossLayer<Dtype> {
       const vector<Blob<Dtype>*>& top);
 
   virtual inline const char* type() const { return "SoftmaxWithLoss"; }
+  virtual inline int ExactNumBottomBlobs() const { return -1; }
+  virtual inline int MinBottomBlobs() const { return 2; }
+  virtual inline int MaxBottomBlobs() const { return 3; }
   virtual inline int ExactNumTopBlobs() const { return -1; }
   virtual inline int MinTopBlobs() const { return 1; }
   virtual inline int MaxTopBlobs() const { return 2; }
