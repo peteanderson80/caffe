@@ -535,6 +535,30 @@ message RecurrentConnectionParameter {
 }
 
 message BeamSearchParameter {
+  //////////////////////////////////////////////////////////////////////////////
+  // Specifying the beam search network
+  //
+  // A single timestep inner net must be specified using either the net_param 
+  // or net fields. The inner net must contain an input layer. Bottom blobs 
+  // from the beam search layer will be copied into the inner net based on position.
+  // To allow for recurrent feedback, the inner net must contain at least one output 
+  // and one additional input. The inner net can also contain additional
+  // recurrent_connections, e.g. for LSTM hidden state and memory cells. For
+  // correct backprop, blobs specified as recurrent_connection.src must be outputs, 
+  // i.e. not appearing as inputs to any other layer (use manually defined split layers,
+  // refer test_beam_search_layer.cpp for an example).
+  // Note if using Backward passes over LSTMs then cache_gates must be set to false.
+  // Some layers that cache state such as DropoutLayer will not work correctly.
+  // 
+  //////////////////////////////////////////////////////////////////////////////
+
+  // Proto filename for the net
+  optional string net = 1;
+  // Inline train net param
+  optional NetParameter net_param = 2;
+  // Optional, the pretrained weights to use for beam search. Alternatively, param
+  // names can be set to match outside layers for weight sharing.
+  optional string weights = 3;
   // Length of the beam search output sequence
   optional uint32 sequence_length = 4 [default = 20];
   // Beam size to used when searching
