@@ -11,12 +11,13 @@ namespace caffe {
 
 template <typename Dtype>
 __global__ void kernel_channel_max(const int num, const int channels,
-    const int spatial_dim, const Dtype* data, Dtype* out) {
+    const int spatial_dim, const Dtype* data, const Dtype* channel_width, 
+    Dtype* out) {
   CUDA_KERNEL_LOOP(index, num * spatial_dim) {
     int n = index / spatial_dim;
     int s = index % spatial_dim;
     Dtype maxval = -FLT_MAX;
-    for (int c = 0; c < channels; ++c) {
+    for (int c = 0; c < (channel_width ? channel_width[index] : channels); ++c) {
       maxval = max(data[(n * channels + c) * spatial_dim + s], maxval);
     }
     out[index] = maxval;
@@ -43,13 +44,19 @@ __global__ void kernel_exp(const int count, const Dtype* data, Dtype* out) {
 
 template <typename Dtype>
 __global__ void kernel_channel_sum(const int num, const int channels,
-    const int spatial_dim, const Dtype* data, Dtype* channel_sum) {
+    const int spatial_dim, Dtype* data, const Dtype* channel_width,
+    Dtype* channel_sum) {
   CUDA_KERNEL_LOOP(index, num * spatial_dim) {
     int n = index / spatial_dim;
     int s = index % spatial_dim;
     Dtype sum = 0;
+    const int channel_max = (channel_width ? channel_width[index] : channels);
     for (int c = 0; c < channels; ++c) {
-      sum += data[(n * channels + c) * spatial_dim + s];
+      if (c < channel_max) {
+        sum += data[(n * channels + c) * spatial_dim + s];
+      } else {
+        data[(n * channels + c) * spatial_dim + s] = Dtype(0);
+      }
     }
     channel_sum[index] = sum;
   }
@@ -86,6 +93,10 @@ template <typename Dtype>
 void SoftmaxLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom,
     const vector<Blob<Dtype>*>& top) {
   const Dtype* bottom_data = bottom[0]->gpu_data();
+  const Dtype* channel_width = NULL;
+  if (bottom.size() > 1){
+    channel_width = bottom[1]->gpu_data();
+  }
   Dtype* top_data = top[0]->mutable_gpu_data();
   Dtype* scale_data = scale_.mutable_gpu_data();
   int count = bottom[0]->count();
@@ -97,7 +108,7 @@ void SoftmaxLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom,
   // NOLINT_NEXT_LINE(whitespace/operators)
   kernel_channel_max<Dtype><<<CAFFE_GET_BLOCKS(outer_num_ * inner_num_),
       CAFFE_CUDA_NUM_THREADS>>>(outer_num_, channels, inner_num_, top_data,
-      scale_data);
+      channel_width, scale_data);
   // subtract
   // NOLINT_NEXT_LINE(whitespace/operators)
   kernel_channel_subtract<Dtype><<<CAFFE_GET_BLOCKS(count),
@@ -111,7 +122,7 @@ void SoftmaxLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom,
   // NOLINT_NEXT_LINE(whitespace/operators)
   kernel_channel_sum<Dtype><<<CAFFE_GET_BLOCKS(outer_num_ * inner_num_),
       CAFFE_CUDA_NUM_THREADS>>>(outer_num_, channels, inner_num_, top_data,
-      scale_data);
+      channel_width, scale_data);
   // divide
   // NOLINT_NEXT_LINE(whitespace/operators)
   kernel_channel_div<Dtype><<<CAFFE_GET_BLOCKS(count),

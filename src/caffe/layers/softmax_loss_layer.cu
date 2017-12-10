@@ -9,8 +9,8 @@ namespace caffe {
 
 template <typename Dtype>
 __global__ void SoftmaxLossForwardGPU(const int nthreads,
-          const Dtype* prob_data, const Dtype* label, Dtype* loss,
-          const int num, const int dim, const int spatial_dim,
+          const Dtype* prob_data, const Dtype* label, const Dtype* weights,
+          Dtype* loss, const int num, const int dim, const int spatial_dim,
           const bool has_ignore_label_, const int ignore_label_,
           Dtype* counts) {
   CUDA_KERNEL_LOOP(index, nthreads) {
@@ -21,7 +21,8 @@ __global__ void SoftmaxLossForwardGPU(const int nthreads,
       loss[index] = 0;
       counts[index] = 0;
     } else {
-      loss[index] = -log(max(prob_data[n * dim + label_value * spatial_dim + s],
+      Dtype w = weights ? weights[n * spatial_dim + s] : Dtype(1);
+      loss[index] = -w * log(max(prob_data[n * dim + label_value * spatial_dim + s],
                       Dtype(FLT_MIN)));
       counts[index] = 1;
     }
@@ -34,6 +35,10 @@ void SoftmaxWithLossLayer<Dtype>::Forward_gpu(
   softmax_layer_->Forward(softmax_bottom_vec_, softmax_top_vec_);
   const Dtype* prob_data = prob_.gpu_data();
   const Dtype* label = bottom[1]->gpu_data();
+  const Dtype* weights = NULL;
+  if (bottom.size() > 2) {
+    weights = bottom[2]->cpu_data();
+  }
   const int dim = prob_.count() / outer_num_;
   const int nthreads = outer_num_ * inner_num_;
   // Since this memory is not used for anything until it is overwritten
@@ -45,10 +50,10 @@ void SoftmaxWithLossLayer<Dtype>::Forward_gpu(
   Dtype* counts = prob_.mutable_gpu_diff();
   // NOLINT_NEXT_LINE(whitespace/operators)
   SoftmaxLossForwardGPU<Dtype><<<CAFFE_GET_BLOCKS(nthreads),
-      CAFFE_CUDA_NUM_THREADS>>>(nthreads, prob_data, label, loss_data,
+      CAFFE_CUDA_NUM_THREADS>>>(nthreads, prob_data, label, weights, loss_data,
       outer_num_, dim, inner_num_, has_ignore_label_, ignore_label_, counts);
   Dtype loss;
-  caffe_gpu_asum(nthreads, loss_data, &loss);
+  caffe_gpu_dot(nthreads, loss_data, counts, &loss);
   Dtype valid_count = -1;
   // Only launch another CUDA kernel if we actually need the count of valid
   // outputs.
@@ -65,11 +70,10 @@ void SoftmaxWithLossLayer<Dtype>::Forward_gpu(
 
 template <typename Dtype>
 __global__ void SoftmaxLossBackwardGPU(const int nthreads, const Dtype* top,
-          const Dtype* label, Dtype* bottom_diff, const int num, const int dim,
+          const Dtype* label, const Dtype* weights, Dtype* bottom_diff, 
+          const int num, const int dim, const int channels,
           const int spatial_dim, const bool has_ignore_label_,
           const int ignore_label_, Dtype* counts) {
-  const int channels = dim / spatial_dim;
-
   CUDA_KERNEL_LOOP(index, nthreads) {
     const int n = index / spatial_dim;
     const int s = index % spatial_dim;
@@ -82,6 +86,10 @@ __global__ void SoftmaxLossBackwardGPU(const int nthreads, const Dtype* top,
       counts[index] = 0;
     } else {
       bottom_diff[n * dim + label_value * spatial_dim + s] -= 1;
+      Dtype w = weights ? weights[n * spatial_dim + s] : Dtype(1);
+      for (int k = 0; k < channels; ++k) {
+        bottom_diff[n * dim + k * spatial_dim + s] *= w;
+      }
       counts[index] = 1;
     }
   }
@@ -100,15 +108,20 @@ void SoftmaxWithLossLayer<Dtype>::Backward_gpu(const vector<Blob<Dtype>*>& top,
     const Dtype* top_data = top[0]->gpu_data();
     caffe_gpu_memcpy(prob_.count() * sizeof(Dtype), prob_data, bottom_diff);
     const Dtype* label = bottom[1]->gpu_data();
+    const Dtype* weights = NULL;
+    if (bottom.size() > 2) {
+      weights = bottom[2]->cpu_data();
+    }
     const int dim = prob_.count() / outer_num_;
+    int channels = prob_.shape(softmax_axis_);
     const int nthreads = outer_num_ * inner_num_;
     // Since this memory is never used for anything else,
     // we use to to avoid allocating new GPU memory.
     Dtype* counts = prob_.mutable_gpu_diff();
     // NOLINT_NEXT_LINE(whitespace/operators)
     SoftmaxLossBackwardGPU<Dtype><<<CAFFE_GET_BLOCKS(nthreads),
-        CAFFE_CUDA_NUM_THREADS>>>(nthreads, top_data, label, bottom_diff,
-        outer_num_, dim, inner_num_, has_ignore_label_, ignore_label_, counts);
+        CAFFE_CUDA_NUM_THREADS>>>(nthreads, top_data, label, weights, bottom_diff,
+        outer_num_, dim, channels, inner_num_, has_ignore_label_, ignore_label_, counts);
 
     Dtype valid_count = -1;
     // Only launch another CUDA kernel if we actually need the count of valid

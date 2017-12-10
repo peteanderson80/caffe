@@ -21,12 +21,20 @@ void SoftmaxLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom,
   vector<int> scale_dims = bottom[0]->shape();
   scale_dims[softmax_axis_] = 1;
   scale_.Reshape(scale_dims);
+  if (bottom.size() > 1){
+    CHECK_EQ(outer_num_*inner_num_,bottom[1]->count())
+      << "Channel width parameters must match the number of softmaxes.";
+  }
 }
 
 template <typename Dtype>
 void SoftmaxLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom,
     const vector<Blob<Dtype>*>& top) {
   const Dtype* bottom_data = bottom[0]->cpu_data();
+  const Dtype* channel_width = NULL;
+  if (bottom.size() > 1){
+    channel_width = bottom[1]->cpu_data();
+  }
   Dtype* top_data = top[0]->mutable_cpu_data();
   Dtype* scale_data = scale_.mutable_cpu_data();
   int channels = bottom[0]->shape(softmax_axis_);
@@ -37,8 +45,9 @@ void SoftmaxLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom,
   for (int i = 0; i < outer_num_; ++i) {
     // initialize scale_data to the first plane
     caffe_copy(inner_num_, bottom_data + i * dim, scale_data);
-    for (int j = 0; j < channels; j++) {
-      for (int k = 0; k < inner_num_; k++) {
+    // find the max
+    for (int k = 0; k < inner_num_; k++) {
+      for (int j = 0; j < (channel_width ? channel_width[i*inner_num_+k] : channels); j++) {
         scale_data[k] = std::max(scale_data[k],
             bottom_data[i * dim + j * inner_num_ + k]);
       }
@@ -49,8 +58,21 @@ void SoftmaxLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom,
     // exponentiation
     caffe_exp<Dtype>(dim, top_data, top_data);
     // sum after exp
-    caffe_cpu_gemv<Dtype>(CblasTrans, channels, inner_num_, 1.,
-        top_data, sum_multiplier_.cpu_data(), 0., scale_data);
+    if (channel_width) {
+      for (int k = 0; k < inner_num_; k++) {
+        scale_data[k] = Dtype(0);
+        for (int j = 0; j < channels; j++) {
+          if (j < channel_width[i*inner_num_+k]) {
+            scale_data[k] += top_data[j * inner_num_ + k];
+          } else {
+            top_data[j * inner_num_ + k] = Dtype(0);
+          }
+        }
+      }
+    } else {
+      caffe_cpu_gemv<Dtype>(CblasTrans, channels, inner_num_, 1.,
+          top_data, sum_multiplier_.cpu_data(), 0., scale_data);
+    }
     // division
     for (int j = 0; j < channels; j++) {
       caffe_div(inner_num_, top_data, scale_data, top_data);

@@ -363,6 +363,7 @@ message LayerParameter {
   optional AccuracyParameter accuracy_param = 102;
   optional ArgMaxParameter argmax_param = 103;
   optional BatchNormParameter batch_norm_param = 139;
+  optional BeamSearchParameter beam_search_param = 203;
   optional BiasParameter bias_param = 141;
   optional ConcatParameter concat_param = 104;
   optional ContrastiveLossParameter contrastive_loss_param = 105;
@@ -385,9 +386,11 @@ message LayerParameter {
   optional InputParameter input_param = 143;
   optional LogParameter log_param = 134;
   optional LRNParameter lrn_param = 118;
+  optional LSTMParameter lstm_param = 202;
   optional MemoryDataParameter memory_data_param = 119;
   optional MVNParameter mvn_param = 120;
   optional ParameterParameter parameter_param = 145;
+  optional PermuteParameter permute_param = 206;
   optional PoolingParameter pooling_param = 121;
   optional PowerParameter power_param = 122;
   optional PReLUParameter prelu_param = 131;
@@ -521,6 +524,20 @@ message BatchNormParameter {
   // Small value to add to the variance estimate so that we don't divide by
   // zero.
   optional float eps = 3 [default = 1e-5];
+}
+
+message BeamSearchParameter {
+  // Beam size to used when searching
+  optional uint32 beam_size = 5 [default = 1];
+  // End of sequence index
+  optional uint32 end_of_sequence = 6 [default = 0];
+  // Ignore label for unused outputs
+  optional int32 ignore_label = 11 [default = -1];
+  // Whether to add constraint preventing identical output tokens from being consecutively repeated
+  optional bool prevent_repeats = 9 [default = true];
+  // Optionally, specify output tokens that can appear multiple times in a sequence.
+  // If not empty, all other tokens will be restricted to appearing at most once in the output.
+  repeated uint32 allowed_multiple = 10;
 }
 
 message BiasParameter {
@@ -872,6 +889,21 @@ message LRNParameter {
   optional Engine engine = 6 [default = DEFAULT];
 }
 
+// Message that stores parameters used by LSTMNodeLayer (not LSTMLayer)
+message LSTMParameter {
+  optional uint32 num_cells = 1;
+  optional FillerParameter input_weight_filler = 2; // The filler for the weight
+  optional FillerParameter input_gate_weight_filler = 3; // The filler for the weight
+  optional FillerParameter forget_gate_weight_filler = 4; // The filler for the weight
+  optional FillerParameter output_gate_weight_filler = 5; // The filler for the weight
+  optional bool bias_term = 6 [default = true]; // Whether to use bias terms
+  optional FillerParameter input_bias_filler = 7; // The filler for the biases
+  optional FillerParameter input_gate_bias_filler = 8; // The filler for the biases
+  optional FillerParameter forget_gate_bias_filler = 9; // The filler for the biases
+  optional FillerParameter output_gate_bias_filler = 10; // The filler for the biases
+  optional bool cache_gates = 11 [default = true]; // Whether gates can be cached (not within beam search)
+}
+
 message MemoryDataParameter {
   optional uint32 batch_size = 1;
   optional uint32 channels = 2;
@@ -892,6 +924,13 @@ message MVNParameter {
 
 message ParameterParameter {
   optional BlobShape shape = 1;
+}
+
+message PermuteParameter {
+  // The new orders of the axes of data. Notice it should be with
+  // in the same range as the input data, and it starts from 0.
+  // Do not provide repeated order.
+  repeated uint32 order = 1;
 }
 
 message PoolingParameter {

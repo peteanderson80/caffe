@@ -23,18 +23,26 @@ class SoftmaxLayerTest : public MultiDeviceTest<TypeParam> {
  protected:
   SoftmaxLayerTest()
       : blob_bottom_(new Blob<Dtype>(2, 10, 2, 3)),
+        blob_channel_width_(new Blob<Dtype>(2, 1, 2, 3)),
         blob_top_(new Blob<Dtype>()) {
     // fill the values
     FillerParameter filler_param;
     GaussianFiller<Dtype> filler(filler_param);
     filler.Fill(this->blob_bottom_);
+    for (int i = 0; i < blob_channel_width_->count(); ++i){
+      blob_channel_width_->mutable_cpu_data()[i] = std::max(5,i%10); 
+    }
     blob_bottom_vec_.push_back(blob_bottom_);
+    blob_dynamic_bottom_vec_.push_back(blob_bottom_);
+    blob_dynamic_bottom_vec_.push_back(blob_channel_width_);
     blob_top_vec_.push_back(blob_top_);
   }
-  virtual ~SoftmaxLayerTest() { delete blob_bottom_; delete blob_top_; }
+  virtual ~SoftmaxLayerTest() { delete blob_bottom_; delete blob_channel_width_, delete blob_top_; }
   Blob<Dtype>* const blob_bottom_;
+  Blob<Dtype>* const blob_channel_width_;
   Blob<Dtype>* const blob_top_;
   vector<Blob<Dtype>*> blob_bottom_vec_;
+  vector<Blob<Dtype>*> blob_dynamic_bottom_vec_;
   vector<Blob<Dtype>*> blob_top_vec_;
 };
 
@@ -74,6 +82,46 @@ TYPED_TEST(SoftmaxLayerTest, TestForward) {
   }
 }
 
+TYPED_TEST(SoftmaxLayerTest, TestForwardWithChannelWidth) {
+  typedef typename TypeParam::Dtype Dtype;
+  LayerParameter layer_param;
+  SoftmaxLayer<Dtype> layer(layer_param);
+  layer.SetUp(this->blob_dynamic_bottom_vec_, this->blob_top_vec_);
+  layer.Forward(this->blob_dynamic_bottom_vec_, this->blob_top_vec_);
+  // Test sum
+  const Dtype* channel_sum = this->blob_channel_width_->cpu_data();
+  for (int i = 0; i < this->blob_bottom_->num(); ++i) {
+    for (int k = 0; k < this->blob_bottom_->height(); ++k) {
+      for (int l = 0; l < this->blob_bottom_->width(); ++l) {
+        Dtype sum = 0;
+        for (int j = 0; j < this->blob_top_->channels(); ++j) {
+          if (j < *channel_sum){
+            sum += this->blob_top_->data_at(i, j, k, l);
+          } else {
+            EXPECT_EQ(this->blob_top_->data_at(i, j, k, l), Dtype(0));
+          }
+        }
+        EXPECT_GE(sum, 0.999);
+        EXPECT_LE(sum, 1.001);
+        // Test exact values
+        Dtype scale = 0;
+        for (int j = 0; j < *channel_sum; ++j) {
+          scale += exp(this->blob_bottom_->data_at(i, j, k, l));
+        }
+        for (int j = 0; j < *channel_sum; ++j) {
+          EXPECT_GE(this->blob_top_->data_at(i, j, k, l) + 1e-4,
+              exp(this->blob_bottom_->data_at(i, j, k, l)) / scale)
+              << "debug: " << i << " " << j;
+          EXPECT_LE(this->blob_top_->data_at(i, j, k, l) - 1e-4,
+              exp(this->blob_bottom_->data_at(i, j, k, l)) / scale)
+              << "debug: " << i << " " << j;
+        }
+        ++channel_sum;
+      }
+    }
+  }
+}
+
 TYPED_TEST(SoftmaxLayerTest, TestGradient) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
@@ -81,6 +129,15 @@ TYPED_TEST(SoftmaxLayerTest, TestGradient) {
   GradientChecker<Dtype> checker(1e-2, 1e-3);
   checker.CheckGradientExhaustive(&layer, this->blob_bottom_vec_,
       this->blob_top_vec_);
+}
+
+TYPED_TEST(SoftmaxLayerTest, TestGradientWithChannelWidth) {
+  typedef typename TypeParam::Dtype Dtype;
+  LayerParameter layer_param;
+  SoftmaxLayer<Dtype> layer(layer_param);
+  GradientChecker<Dtype> checker(1e-2, 1e-3);
+  checker.CheckGradientExhaustive(&layer, this->blob_dynamic_bottom_vec_,
+      this->blob_top_vec_, 0);
 }
 
 #ifdef USE_CUDNN

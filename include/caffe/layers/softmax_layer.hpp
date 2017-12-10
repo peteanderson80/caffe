@@ -10,7 +10,9 @@
 namespace caffe {
 
 /**
- * @brief Computes the softmax function.
+ * @brief Computes the softmax function. Optionally, a second bottom blob can be 
+ *        provided containing the (adaptive) number of elements to be included 
+ *        in each softmax (CAFFE engine only, not implemented for CUDNN).
  *
  * TODO(dox): thorough documentation for Forward, Backward, and proto params.
  */
@@ -23,7 +25,8 @@ class SoftmaxLayer : public Layer<Dtype> {
       const vector<Blob<Dtype>*>& top);
 
   virtual inline const char* type() const { return "Softmax"; }
-  virtual inline int ExactNumBottomBlobs() const { return 1; }
+  virtual inline int MinBottomBlobs() const { return 1; }
+  virtual inline int MaxBottomBlobs() const { return 2; }
   virtual inline int ExactNumTopBlobs() const { return 1; }
 
  protected:
