@@ -26,7 +26,6 @@ void LSTMNodeLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
       const vector<Blob<Dtype>*>& top) {
   LSTMParameter lstm_param = this->layer_param_.lstm_param();
   bias_term_ = lstm_param.bias_term();
-  cache_gates_ = lstm_param.cache_gates();
   N_ = lstm_param.num_cells();
   K_ = bottom[0]->count(1);
 
@@ -184,10 +183,6 @@ void LSTMNodeLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom,
 template <typename Dtype>
 void LSTMNodeLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& top,
       const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom) {
-
-  if (!cache_gates_){
-    Forward_cpu(bottom, top);
-  }
 
   const Dtype* h_diff = top[0]->cpu_diff();
   const Dtype* c_diff = top[1]->cpu_diff();

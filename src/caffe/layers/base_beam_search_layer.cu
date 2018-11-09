@@ -19,19 +19,17 @@ template <typename Dtype>
 void BaseBeamSearchLayer<Dtype>::copy_bottom_inputs_gpu(const vector<Blob<Dtype>*>& bottom) {
   // Copy bottom input into the beam search net, duplicating for size of beam search
   const int batch_size = bottom[0]->shape(0);
-  
-  for (int i = 0; i < bottom.size(); ++i) {
-    const Dtype* src_data = bottom[i]->gpu_data();
-    Dtype* tgt_data = this->net_->input_blobs().at(i)->mutable_gpu_data();
+  for (int i = 0; i < bottom_connections_.size(); ++i) {
+    int bottom_ix = bottom_connections_[i].first;
+    const Dtype* src_data = bottom[bottom_ix]->cpu_data();
+    Dtype* tgt_data = bottom_connections_[i].second->mutable_cpu_data();
     for (int k = 0; k < batch_size; ++k) {
-      for (int j = 0; j < this->beam_size_; ++j) { // Multiple copies to accomodate beam size
-        caffe_copy(bottom[i]->count()/batch_size, src_data, tgt_data);
-        tgt_data += bottom[i]->count()/batch_size;
+      for (int j = 0; j < this->beam_size_ * this->num_states_; ++j) { // Multiple copies to accomodate beam size
+        caffe_copy(bottom[bottom_ix]->count()/batch_size, src_data, tgt_data);
+        tgt_data += bottom[bottom_ix]->count()/batch_size;
       }
-      src_data += bottom[i]->count()/batch_size;
+      src_data += bottom[bottom_ix]->count()/batch_size;
     }
-    DLOG(INFO) << "Copied " << this->layer_param().bottom(i) << " to " 
-        << this->net_->blob_names().at(i) << " in BeamSearch net";
   }
 }
 
@@ -165,9 +163,9 @@ __global__ void UpdateScore(
   int* score_indices_data)
 {
   CUDA_KERNEL_LOOP(idx, nthreads) {
-    // For each beam expansion, calculate the score summed
-    // over the resulting partial sequence.
-    bool beam_complete = (timestep > 0) && (input_sequence_data[idx] == Dtype(end_of_sequence));
+    // One kernel for each partial sequence. Consider the top beam_size possible expansions, 
+    // and calculate the score for the resulting sequence. Note: score_data starts as -FLT_MAX.
+    const bool beam_complete = (timestep > 0) && (input_sequence_data[idx] == Dtype(end_of_sequence));
     int c = 0; // candidate index
     int e = 0; // output index
     while (e < beam_size) { // expansion
@@ -175,17 +173,16 @@ __global__ void UpdateScore(
       int index = output_score_indices_data[idx*vocab_size+c];
       int word = index % vocab_size;
       int offset = idx*beam_size + e;
-      if (timestep == 0 && idx % beam_size != 0) {
-        // All beams are the same in first iteration, so avoid duplicating multiple copies
-        e = beam_size;
-        continue;
+      score_indices_data[offset] = index;
+      if (timestep == 0 && (idx % beam_size != 0)) {
+        // All beams are the same in first iteration (empty), so avoid duplicates
+        // by not expanding unless this is beam 0
+        break;
       } else if (beam_complete) {
         // Keep, but don't expand completed beam
-        score_indices_data[offset] = index;
         score_data[offset] = partial_score[idx];
         // Don't want multiple copies of completed beam
-        e = beam_size;
-        continue;
+        break;
       } else if (prevent_repeats && input_sequence_data[idx] == Dtype(word)) {
         // Don't allow an immediate repeat of any word
         c++;
@@ -210,7 +207,6 @@ __global__ void UpdateScore(
           }
         }
       }
-      score_indices_data[offset] = index;
       score_data[offset] = output_score_sorted[idx*vocab_size+c];
       if (timestep > 0) { // Add score of existing partial sequence
         score_data[offset] += partial_score[idx];
@@ -275,7 +271,7 @@ __global__ void GenerateOutput(
   const int nthreads,
   int beam_size,
   const int vocab_size,
-  int num_stratas,
+  int num_states,
   int end_of_sequence,
   int timestep,
   int sequence_length,
@@ -289,13 +285,13 @@ __global__ void GenerateOutput(
   Dtype* score_output)
 {
   CUDA_KERNEL_LOOP(idx, nthreads) {
-    const int n = idx / (num_stratas*beam_size); // which element in batch
+    const int n = idx / (num_states*beam_size); // which element in batch
     const int beam = idx % beam_size;
-    const int strata = (idx / beam_size) % num_stratas;
-    const int index = score_indices_data[(n*num_stratas + strata)*beam_size*max_expansions + beam];
+    const int state = (idx / beam_size) % num_states;
+    const int index = score_indices_data[(n*num_states + state)*beam_size*max_expansions + beam];
     const int idx_index = index / vocab_size;
     const int word_index = index % vocab_size;
-    score_output[idx] = score_data[(n*num_stratas + strata)*beam_size*max_expansions + beam];
+    score_output[idx] = score_data[(n*num_states + state)*beam_size*max_expansions + beam];
     Dtype partial_score_sum = 0;
     for (int s = 0; s < timestep; ++s) {
       sequence_output[idx*sequence_length + s] = sequence_output_prev[idx_index*sequence_length + s];
@@ -330,7 +326,7 @@ void BaseBeamSearchLayer<Dtype>::generate_output(const vector<Blob<Dtype>*>& top
   const int nthreads = input_sequence_->shape(0);
   GenerateOutput<Dtype>  // NOLINT_NEXT_LINE(whitespace/operators)
   <<<CAFFE_GET_BLOCKS(nthreads), CAFFE_CUDA_NUM_THREADS>>>(
-    nthreads, this->beam_size_, this->vocab_size_, this->num_stratas_, this->end_of_sequence_, timestep,
+    nthreads, this->beam_size_, this->vocab_size_, this->num_states_, this->end_of_sequence_, timestep,
     this->sequence_length_, max_expansions, score_data, score_indices_data, sequence_output_prev, sequence_output,
     score_sequence_output_prev, score_sequence_output, score_output);
   CUDA_POST_KERNEL_CHECK;

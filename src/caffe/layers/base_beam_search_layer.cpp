@@ -17,6 +17,7 @@ void BaseBeamSearchLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
   beam_size_ = beam_search_param.beam_size();
   end_of_sequence_ = beam_search_param.end_of_sequence();
   prevent_repeats_ = beam_search_param.prevent_repeats();
+  log_reshape_ = true;
   allowed_multiple_size_ = beam_search_param.allowed_multiple_size();
   if (allowed_multiple_size_ > 0) {
     LOG(INFO) << "Output tokens will be restricted from appearing multiple times.";
@@ -68,6 +69,7 @@ void BaseBeamSearchLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
   input_sequence_ = net_->blob_by_name(to);
   CHECK_EQ(input_sequence_->num_axes(), 2) << " BeamSearch 'to' connection must have 2 axes";
   CHECK_EQ(input_sequence_->shape(1), 1) << " BeamSearch 'to' connection must have shape (batch_size, 1)";
+  // Check recurrent connections in the beam search net
   for (int i = 0; i < beam_search_param.recurrent_connection_size(); ++i) {
     from = beam_search_param.recurrent_connection(i).src();
     to = beam_search_param.recurrent_connection(i).dest();
@@ -83,6 +85,34 @@ void BaseBeamSearchLayer<Dtype>::LayerSetUp(const vector<Blob<Dtype>*>& bottom,
     }
     recurrent_connections_.push_back(std::make_pair(from_blob, to_blob));
   }
+  // Check input connections to the beam search net
+  for (int i = 0; i < bottom.size(); ++i) {
+    string blob_name = this->layer_param().bottom(i);
+    if (net_->has_blob(blob_name)){
+      shared_ptr<Blob<Dtype> > to_blob = net_->blob_by_name(blob_name);
+      bottom_connections_.push_back(std::make_pair(i, to_blob));
+      LOG(INFO) << "BeamSearch layer bottom " << blob_name << " matched in BeamSearch net";
+    } else { // Caffe automatically creates blob splits and changes the name (see utils/insert_splits.cpp)
+      std::size_t current = 0;
+      char delim = '_';
+      current = blob_name.find(delim);
+      bool found = false;
+      while (!found && current != std::string::npos) {
+        string short_blob_name = blob_name.substr(0,current);
+        if (net_->has_blob(short_blob_name)){
+          shared_ptr<Blob<Dtype> > to_blob = net_->blob_by_name(short_blob_name);
+          bottom_connections_.push_back(std::make_pair(i, to_blob));
+          LOG(INFO) << "BeamSearch layer bottom " << blob_name << " matches " << short_blob_name 
+            << " in BeamSearch net";
+          found = true;
+        }
+        current = blob_name.find(delim, current+1);
+      }
+      if (!found) {
+        LOG(INFO) << "BeamSearch layer bottom " << blob_name << " NOT matched in BeamSearch net";
+      } 
+    }
+  }
 }
 
 template <typename Dtype>
@@ -97,41 +127,45 @@ void BaseBeamSearchLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom,
   }
   // Reshape any recurrent input layers within the beam search net to have correct batch size
   vector<int> input_shape(input_sequence_->shape());
-  num_stratas_ = ExactNumStratas(bottom);
-  input_shape[0] = batch_size * beam_size_ * num_stratas_;
+  num_states_ = NumStates(bottom);
+  input_shape[0] = batch_size * beam_size_ * num_states_;
   input_sequence_->Reshape(input_shape);
-  DLOG(INFO) << "Reshaped BeamSearch net " << beam_search_param.beam_search_connection().dest()
+  LOG_IF(INFO, log_reshape_) << "Reshaped BeamSearch net " << beam_search_param.beam_search_connection().dest()
       << " to " << input_sequence_->shape_string();
   for (int i = 0; i < recurrent_connections_.size(); ++i) {
     vector<int> shape(recurrent_connections_[i].second->shape());
-    shape[0] = batch_size * beam_size_ * num_stratas_;
+    shape[0] = batch_size * beam_size_ * num_states_;
     recurrent_connections_[i].second->Reshape(shape);
-    DLOG(INFO) << "Reshaped BeamSearch net " << beam_search_param.recurrent_connection(i).dest()
+    LOG_IF(INFO, log_reshape_) << "Reshaped BeamSearch net " << beam_search_param.recurrent_connection(i).dest()
     << " to " << recurrent_connections_[i].second->shape_string();
   }
-  // Reshape inputs from bottom blobs - bottom blobs are transferred in by position, not name
-  for (int i = 0; i < bottom.size(); ++i) {
-    vector<int> bottom_shape = net_->input_blobs().at(i)->shape();
-    bottom_shape[0] = batch_size * beam_size_;
-    net_->input_blobs().at(i)->Reshape(bottom_shape);
+  // Reshape inputs to suit batch size and beam search architecture
+  for (int i = 0; i < bottom_connections_.size(); ++i) {
+    vector<int> bottom_shape(bottom_connections_[i].second->shape());
+    bottom_shape[0] = batch_size * beam_size_ * num_states_;
+    bottom_connections_[i].second->Reshape(bottom_shape);
+    string blob_name = this->layer_param().bottom(bottom_connections_[i].first);
+    LOG_IF(INFO, log_reshape_) << "Reshaped BeamSearch net " << blob_name << " to "
+      << bottom_connections_[i].second->shape_string();
   }
+  log_reshape_ = false; // only first call is logged
   net_->Reshape();
   // Setup temp data structures and reshape output
   output_score_indices_.Reshape(output_score_->shape());
   vector<int> shape;
-  shape.push_back(batch_size*num_stratas_);
+  shape.push_back(batch_size*num_states_);
   shape.push_back(beam_size_);
   shape.push_back(beam_size_);
   score_.Reshape(shape);
   score_indices_.Reshape(shape);
   shape.clear();
   shape.push_back(batch_size);
-  shape.push_back(num_stratas_);
+  shape.push_back(num_states_);
   shape.push_back(beam_size_);
-  top[1]->Reshape(shape); // summed scores (batch_size, num_stratas, beam_size)
+  top[1]->Reshape(shape); // summed scores (batch_size, num_states, beam_size)
   shape.push_back(sequence_length_);
-  top[0]->Reshape(shape); // sequences (batch_size, num_stratas, beam_size, sequence_length)
-  top[2]->Reshape(shape); // score sequence (batch_size, num_stratas, beam_size, sequence_length)
+  top[0]->Reshape(shape); // sequences (batch_size, num_states, beam_size, sequence_length)
+  top[2]->Reshape(shape); // score sequence (batch_size, num_states, beam_size, sequence_length)
 }
 
 template <typename Dtype>
@@ -148,19 +182,16 @@ template <typename Dtype>
 void BaseBeamSearchLayer<Dtype>::copy_bottom_inputs_cpu(const vector<Blob<Dtype>*>& bottom) {
   // Copy bottom input into the beam search net, duplicating for size of beam search
   const int batch_size = bottom[0]->shape(0);
-  for (int i = 0; i < bottom.size(); ++i) {
-    string blob_name = this->layer_param().bottom(i);
-    if (this->net_->has_blob(blob_name)){
-      const Dtype* src_data = bottom[i]->cpu_data();
-      Dtype* tgt_data = this->net_->blob_by_name(blob_name)->mutable_cpu_data();
-      for (int k = 0; k < batch_size; ++k) {
-        for (int j = 0; j < this->beam_size_; ++j) { // Multiple copies to accomodate beam size
-          caffe_copy(bottom[i]->count()/batch_size, src_data, tgt_data);
-          tgt_data += bottom[i]->count()/batch_size;
-        }
-        src_data += bottom[i]->count()/batch_size;
+  for (int i = 0; i < bottom_connections_.size(); ++i) {
+    int bottom_ix = bottom_connections_[i].first;
+    const Dtype* src_data = bottom[bottom_ix]->cpu_data();
+    Dtype* tgt_data = bottom_connections_[i].second->mutable_cpu_data();
+    for (int k = 0; k < batch_size; ++k) {
+      for (int j = 0; j < this->beam_size_; ++j) { // Multiple copies to accomodate beam size
+        caffe_copy(bottom[bottom_ix]->count()/batch_size, src_data, tgt_data);
+        tgt_data += bottom[bottom_ix]->count()/batch_size;
       }
-      DLOG(INFO) << "Copied " << blob_name << " into BeamSearch net";
+      src_data += bottom[bottom_ix]->count()/batch_size;
     }
   }
 }

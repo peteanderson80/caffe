@@ -79,7 +79,6 @@ class LSTMNodeLayer : public Layer<Dtype> {
   bool bias_term_;
   Blob<Dtype> ones_;
   Blob<Dtype> tanh_c_;
-  bool cache_gates_;
 };
 
 

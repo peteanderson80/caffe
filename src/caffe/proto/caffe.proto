@@ -541,15 +541,12 @@ message BeamSearchParameter {
   //
   // A single timestep inner net must be specified using either the net_param 
   // or net fields. The inner net must contain an input layer. Bottom blobs 
-  // from the beam search layer will be copied into the inner net based on position.
+  // from the beam search layer will be copied into the inner net based on name matches.
   // To allow for recurrent feedback, the inner net must contain at least one output 
   // and one additional input. The inner net can also contain additional
   // recurrent_connections, e.g. for LSTM hidden state and memory cells. For
   // correct backprop, blobs specified as recurrent_connection.src must be outputs, 
-  // i.e. not appearing as inputs to any other layer (use manually defined split layers,
-  // refer test_beam_search_layer.cpp for an example).
-  // Note if using Backward passes over LSTMs then cache_gates must be set to false.
-  // Some layers that cache state such as DropoutLayer will not work correctly.
+  // i.e. not appearing as inputs to any other layer (use manually defined split layers).
   // 
   //////////////////////////////////////////////////////////////////////////////
 
@@ -951,7 +948,6 @@ message LSTMParameter {
   optional FillerParameter input_gate_bias_filler = 8; // The filler for the biases
   optional FillerParameter forget_gate_bias_filler = 9; // The filler for the biases
   optional FillerParameter output_gate_bias_filler = 10; // The filler for the biases
-  optional bool cache_gates = 11 [default = true]; // Whether gates can be cached (not within beam search)
 }
 
 message MemoryDataParameter {

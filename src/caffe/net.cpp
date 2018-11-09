@@ -799,7 +799,6 @@ void Net<Dtype>::CopyTrainedLayersFromHDF5(const string trained_filename) {
       continue;
     }
     int target_layer_id = layer_names_index_[source_layer_name];
-    DLOG(INFO) << "Copying source layer " << source_layer_name;
     vector<shared_ptr<Blob<Dtype> > >& target_blobs =
         layers_[target_layer_id]->blobs();
     hid_t layer_hid = H5Gopen2(data_hid, source_layer_name.c_str(),
@@ -825,6 +824,7 @@ void Net<Dtype>::CopyTrainedLayersFromHDF5(const string trained_filename) {
               << source_layer_name;
         }
       }
+      LOG(INFO) << "Copying source layer " << source_layer_name << " blob " << j;
       hdf5_load_nd_dataset(layer_hid, dataset_name.c_str(), 0, kMaxBlobAxes,
           target_blobs[j].get());
     }

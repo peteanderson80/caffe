@@ -122,10 +122,6 @@ template <typename Dtype>
 void LSTMNodeLayer<Dtype>::Backward_gpu(const vector<Blob<Dtype>*>& top,
       const vector<bool>& propagate_down, const vector<Blob<Dtype>*>& bottom) {
 
-  if (!cache_gates_){
-    Forward_gpu(bottom, top);
-  }
-
   const Dtype* h_diff = top[0]->gpu_diff();
   const Dtype* c_diff = top[1]->gpu_diff();
 

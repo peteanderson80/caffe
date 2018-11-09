@@ -123,26 +123,6 @@ TYPED_TEST(LSTMNodeLayerTest, TestGradientAcrossChannels) {
       this->blob_top_vec_, 1);
 }
 
-TYPED_TEST(LSTMNodeLayerTest, TestGradientWithNoCache) {
-  typedef typename TypeParam::Dtype Dtype;
-  LayerParameter layer_param;
-  LSTMParameter* lstm_param = layer_param.mutable_lstm_param();
-  lstm_param->set_cache_gates(false);
-  lstm_param->set_num_cells(NUM_CELLS);
-  lstm_param->mutable_input_weight_filler()->set_type("gaussian");
-  lstm_param->mutable_input_gate_weight_filler()->set_type("gaussian");
-  lstm_param->mutable_forget_gate_weight_filler()->set_type("gaussian");
-  lstm_param->mutable_output_gate_weight_filler()->set_type("gaussian");
-  lstm_param->set_bias_term(false);
-
-  LSTMNodeLayer<Dtype> layer(layer_param);
-  GradientChecker<Dtype> checker(1e-2, 1e-2);
-  checker.CheckGradientExhaustive(&layer, this->blob_bottom_vec_,
-      this->blob_top_vec_, 0);
-  checker.CheckGradientExhaustive(&layer, this->blob_bottom_vec_,
-      this->blob_top_vec_, 1);
-}
-
 TYPED_TEST(LSTMNodeLayerTest, TestSetupAcrossChannelsWithBiases) {
   typedef typename TypeParam::Dtype Dtype;
   LayerParameter layer_param;
